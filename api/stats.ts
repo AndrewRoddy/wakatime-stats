@@ -68,31 +68,6 @@ const formatTime = (seconds: number): string => {
   return `${secs}s`;
 };
 
-const wrapLanguageNames = (names: string[]): string[] => {
-  const lines: string[] = [];
-  let currentLine: string[] = [];
-  let currentLength = 0;
-  const maxLength = 95; // pixels approximation
-
-  names.forEach((name) => {
-    const nameLength = name.length * 6.5 + 2; // rough estimate for monospace
-    if (currentLength + nameLength > maxLength && currentLine.length > 0) {
-      lines.push(currentLine.join(', '));
-      currentLine = [name];
-      currentLength = nameLength;
-    } else {
-      currentLine.push(name);
-      currentLength += nameLength;
-    }
-  });
-
-  if (currentLine.length > 0) {
-    lines.push(currentLine.join(', '));
-  }
-
-  return lines;
-};
-
 const fetchStats = async (username: string): Promise<WakatimeData> => {
   const response = await fetch(
     `https://wakapi.dev/api/compat/wakatime/v1/users/${username}/stats/`,
@@ -103,34 +78,29 @@ const fetchStats = async (username: string): Promise<WakatimeData> => {
 };
 
 const createSvg = (data: WakatimeData['data']): string => {
-  const sorted = [...data.languages].sort(
-    (a, b) => b.total_seconds - a.total_seconds
-  );
-
-  // Separate languages >= 1 hour and < 1 hour
-  const majorLangs = sorted.filter((l) => l.total_seconds >= 3600);
-  const minorLangs = sorted.filter((l) => l.total_seconds < 3600);
-  const minorNames = minorLangs.map((l) => l.name);
-  const minorLines = wrapLanguageNames(minorNames);
+  const totalLanguages = data.languages.length;
+  
+  const sorted = [...data.languages]
+    .filter((l) => l.total_seconds >= 3600)
+    .sort((a, b) => b.total_seconds - a.total_seconds);
 
   const codingCategory = data.categories.find((c) => c.name === 'coding');
   const codingPercent = codingCategory?.percent || 0;
-  const maxPercent = Math.max(...majorLangs.map((l) => l.percent));
+  const maxPercent = Math.max(...sorted.map((l) => l.percent));
 
   // Calculate average per day: total / 10
   const avgDailySeconds = data.total_seconds / 10;
   const avgDisplay = formatTime(avgDailySeconds);
 
-  const mid = Math.ceil(majorLangs.length / 2);
-  const leftCol = majorLangs.slice(0, mid);
-  const rightCol = majorLangs.slice(mid);
+  const mid = Math.ceil(sorted.length / 2);
+  const leftCol = sorted.slice(0, mid);
+  const rightCol = sorted.slice(mid);
 
   const width = 900;
   const headerHeight = 150;
   const langRowHeight = 36;
   const maxRows = Math.max(leftCol.length, rightCol.length);
-  const minorHeight = minorLangs.length > 0 ? minorLines.length * 16 + 8 : 0;
-  const height = headerHeight + maxRows * langRowHeight + minorHeight + 40;
+  const height = headerHeight + maxRows * langRowHeight + 40;
 
   const createColumn = (languages: Language[], startX: number): string => {
     return languages
@@ -162,25 +132,6 @@ const createSvg = (data: WakatimeData['data']): string => {
       .join('');
   };
 
-  const minorSection =
-    minorLangs.length > 0
-      ? `
-        <g>
-          ${minorLines
-            .map(
-              (line, i) => `
-            <text x="450" y="${headerHeight + maxRows * langRowHeight + 12 + i * 16}"
-              font-family="system-ui, -apple-system, sans-serif"
-              font-size="11" fill="#94A3B8" text-anchor="middle">
-              ${escapeXml(line)}${i === minorLines.length - 1 ? ': &lt;1hr' : ''}
-            </text>
-          `
-            )
-            .join('')}
-        </g>
-      `
-      : '';
-
   return `
     <svg width="${width}" height="${height}"
       viewBox="0 0 ${width} ${height}"
@@ -205,15 +156,17 @@ const createSvg = (data: WakatimeData['data']): string => {
       <rect x="0" y="0" width="${width}" height="4" rx="16" fill="url(#accent)"/>
 
       <!-- Header -->
-      <text x="20" y="35"
+      <text x="450" y="35"
         font-family="system-ui, -apple-system, sans-serif"
-        font-size="24" font-weight="800" fill="#F8FAFC">
+        font-size="24" font-weight="800" fill="#F8FAFC"
+        text-anchor="middle">
         @${escapeXml(data.username)}
       </text>
 
-      <text x="20" y="60"
+      <text x="450" y="60"
         font-family="system-ui, -apple-system, sans-serif"
-        font-size="13" fill="#94A3B8">
+        font-size="13" fill="#94A3B8"
+        text-anchor="middle">
         Wakatime Stats • ${codingPercent.toFixed(0)}% coding
       </text>
 
@@ -239,19 +192,19 @@ const createSvg = (data: WakatimeData['data']): string => {
           font-family="monospace" font-size="18" fill="#F1F5F9"
           font-weight="700" text-anchor="middle">${avgDisplay}</text>
 
-        <!-- Languages count -->
+        <!-- Total languages count -->
         <rect x="580" y="70" width="200" height="60"
           rx="8" fill="#1E293B" stroke="#334155" stroke-width="1"/>
         <text x="680" y="92"
           font-family="system-ui" font-size="12" fill="#94A3B8"
-          font-weight="600" text-anchor="middle">MAJOR LANGS</text>
+          font-weight="600" text-anchor="middle">LANGUAGES</text>
         <text x="680" y="116"
           font-family="monospace" font-size="18" fill="#F1F5F9"
-          font-weight="700" text-anchor="middle">${majorLangs.length}</text>
+          font-weight="700" text-anchor="middle">${totalLanguages}</text>
       </g>
 
       <!-- Left column -->
-      ${createColumn(leftCol, 20)}
+      ${createColumn(leftCol, 80)}
 
       <!-- Divider -->
       <line x1="470" y1="${headerHeight + 10}"
@@ -259,10 +212,7 @@ const createSvg = (data: WakatimeData['data']): string => {
         stroke="#334155" stroke-width="1" opacity="0.3"/>
 
       <!-- Right column -->
-      ${createColumn(rightCol, 490)}
-
-      <!-- Minor languages -->
-      ${minorSection}
+      ${createColumn(rightCol, 550)}
     </svg>
   `;
 };
